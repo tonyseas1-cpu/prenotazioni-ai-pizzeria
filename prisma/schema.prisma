@@ -7,101 +7,207 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// 1. TENANT / RISTORANTE
-model Restaurant {
-  id               String            @id @default(uuid())
-  name             String
-  slug             String            @unique
-  address          String?
-  phone            String?
-  timezone         String            @default("Europe/Rome")
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-
-  users            User[]
-  settings         RestaurantSettings?
-  hours            RestaurantHours[]
-  agentPersona     AgentPersona?
-  customers        Customer[]
-  conversations    Conversation[]
-  bookings         Booking[]
-
-  @@map("restaurants")
-}
-
-// 2. UTENTI DASHBOARD (Ristoratori / Admin)
+// 1. RUOLI UTENTE
 enum Role {
   SUPER_ADMIN
   ADMIN
   STAFF
 }
 
+// 2. STATI PRENOTAZIONE
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+// 3. MITTENTI MESSAGGI
+enum MessageSender {
+  CUSTOMER
+  AGENT
+  HUMAN_STAFF
+}
+
+// 4. PIANI SAAS
+enum PlanTier {
+  FREE
+  STARTER
+  PRO
+  PREMIUM
+}
+
+// -------------------------------------------------------------
+// 1. TENANT / RISTORANTE
+// -------------------------------------------------------------
+model Restaurant {
+  id               String            @id @default(uuid())
+  name             String
+  slug             String            @unique
+  address          String?
+  phone            String?
+  website          String?
+  description      String?           @db.Text
+  timezone         String            @default("Europe/Rome")
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  users            User[]
+  settings         RestaurantSettings?
+  hours            RestaurantHours[]
+  closures         RestaurantClosure[]
+  bookingRules     RestaurantBookingRule[]
+  agentPersona     AgentPersona?
+  whatsappAccount  WhatsAppAccount?
+  customers        Customer[]
+  conversations    Conversation[]
+  bookings         Booking[]
+  subscription     Subscription?
+  usageRecords     UsageRecord[]
+  auditLogs        AuditLog[]
+  humanHandoffs    HumanHandoff[]
+  notifications    Notification[]
+
+  @@map("restaurants")
+}
+
+// -------------------------------------------------------------
+// 2. UTENTI DASHBOARD & AUTH
+// -------------------------------------------------------------
 model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
+  id           String      @id @default(uuid())
+  email        String      @unique
   passwordHash String
-  role         Role       @default(ADMIN)
+  name         String?
+  role         Role        @default(ADMIN)
   restaurantId String?
   restaurant   Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   @@map("users")
 }
 
-// 3. IMPOSTAZIONI PRENOTAZIONE
+// -------------------------------------------------------------
+// 3. IMPOSTAZIONI PRENOTAZIONE & CAPIENZA
+// -------------------------------------------------------------
 model RestaurantSettings {
   id                   String     @id @default(uuid())
   restaurantId         String     @unique
   restaurant           Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   
-  maxCapacityPerSlot   Int        @default(30)
+  maxCapacityPerSlot   Int        @default(40)
   slotDurationMinutes  Int        @default(90)
   minNoticeHours       Int        @default(2)
   maxNoticeDays        Int        @default(30)
   minGuests            Int        @default(1)
   maxGuests            Int        @default(10)
   allowSameDay         Boolean    @default(true)
+  autoConfirm          Boolean    @default(true)
 
   @@map("restaurant_settings")
 }
 
-// 4. ORARI E CHIUSURE
+// -------------------------------------------------------------
+// 4. ORARI APERTURA SETTIMANALI (Turni multipli es. Pranzo / Cena)
+// -------------------------------------------------------------
 model RestaurantHours {
   id           String     @id @default(uuid())
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   
   dayOfWeek    Int        // 0 = Domenica, 1 = Lunedì, ..., 6 = Sabato
-  openTime     String     // es: "12:00"
-  closeTime    String     // es: "15:00"
+  shiftName    String     @default("dinner") // "lunch", "dinner", "default"
+  openTime     String     // es: "12:00" o "19:00"
+  closeTime    String     // es: "15:00" o "23:30"
   isClosed     Boolean    @default(false)
 
   @@map("restaurant_hours")
 }
 
-// 5. PERSONALITÀ AGENTE IA
-model AgentPersona {
-  id           String     @id @default(uuid())
-  restaurantId String     @unique
-  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  
-  agentName    String     @default("Mia")
-  tone         String     @default("friendly") // friendly, formal, casual
-  emojiEnabled Boolean    @default(true)
-  customRules  String?    @db.Text
-
-  @@map("agent_personas")
-}
-
-// 6. CLIENTE (Isolato per Ristorante)
-model Customer {
+// -------------------------------------------------------------
+// 5. CHIUSURE STRAORDINARIE / FERIE
+// -------------------------------------------------------------
+model RestaurantClosure {
   id           String     @id @default(uuid())
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   
+  startDate    String     // YYYY-MM-DD
+  endDate      String     // YYYY-MM-DD
+  reason       String?
+
+  @@map("restaurant_closures")
+}
+
+// -------------------------------------------------------------
+// 6. REGOLE SPECIALI DI PRENOTAZIONE
+// -------------------------------------------------------------
+model RestaurantBookingRule {
+  id           String     @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  ruleKey      String     // es: "MAX_GROUP_SIZE_REQUIRES_CALL", "SATURDAY_TIME_LIMIT"
+  ruleValue    String     // Valore o configurazione JSON
+  description  String?
+
+  @@map("restaurant_booking_rules")
+}
+
+// -------------------------------------------------------------
+// 7. PERSONALITÀ AGENTE IA
+// -------------------------------------------------------------
+model AgentPersona {
+  id                  String     @id @default(uuid())
+  restaurantId        String     @unique
+  restaurant          Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  agentName           String     @default("Mia")
+  tone                String     @default("cordiale") // cordiale, formale, energico
+  emojiEnabled        Boolean    @default(true)
+  welcomeMessage      String?    @db.Text
+  confirmationMessage String?    @db.Text
+  cancellationMessage String?    @db.Text
+  closedMessage       String?    @db.Text
+  customRules         String?    @db.Text
+
+  @@map("agent_personas")
+}
+
+// -------------------------------------------------------------
+// 8. CONFIGURAZIONE WHATSAPP (Meta Cloud API / Mock)
+// -------------------------------------------------------------
+model WhatsAppAccount {
+  id             String     @id @default(uuid())
+  restaurantId   String     @unique
+  restaurant     Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  phoneNumberId  String?    @unique
+  displayPhone   String?
+  accessToken    String?    @db.Text
+  verifyToken    String?
+  isActive       Boolean    @default(true)
+  provider       String     @default("mock") // "meta" o "mock"
+
+  @@map("whatsapp_accounts")
+}
+
+// -------------------------------------------------------------
+// 9. CLIENTE (Isolato per Ristorante)
+// -------------------------------------------------------------
+model Customer {
+  id            String     @id @default(uuid())
+  restaurantId  String
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
   whatsappPhone String
   name          String?
+  email         String?
+  notes         String?
+  totalBookings Int        @default(0)
   createdAt     DateTime   @default(now())
 
   conversations Conversation[]
@@ -111,7 +217,9 @@ model Customer {
   @@map("customers")
 }
 
-// 7. CONVERSAZIONE E STATO IA
+// -------------------------------------------------------------
+// 10. CONVERSAZIONE E STATO
+// -------------------------------------------------------------
 model Conversation {
   id           String     @id @default(uuid())
   restaurantId String
@@ -121,41 +229,32 @@ model Conversation {
   customer     Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
   
   currentState String     @default("GREETING")
+  contextData  Json?
   needsHuman   Boolean    @default(false)
   updatedAt    DateTime   @updatedAt
 
   messages     Message[]
+  handoffs     HumanHandoff[]
 
   @@map("conversations")
 }
 
-enum MessageSender {
-  CUSTOMER
-  AGENT
-  HUMAN_STAFF
-}
-
 model Message {
-  id             String       @id @default(uuid())
+  id             String        @id @default(uuid())
   conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   
   sender         MessageSender
-  content        String       @db.Text
-  timestamp      DateTime     @default(now())
+  content        String        @db.Text
+  rawMetadata    Json?
+  timestamp      DateTime      @default(now())
 
   @@map("messages")
 }
 
-// 8. PRENOTAZIONE
-enum BookingStatus {
-  PENDING
-  CONFIRMED
-  CANCELLED
-  COMPLETED
-  NO_SHOW
-}
-
+// -------------------------------------------------------------
+// 11. PRENOTAZIONE
+// -------------------------------------------------------------
 model Booking {
   id           String        @id @default(uuid())
   restaurantId String
@@ -170,6 +269,116 @@ model Booking {
   status       BookingStatus @default(CONFIRMED)
   notes        String?
   createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @default(now()) @updatedAt
 
+  events       BookingEvent[]
+
+  @@index([restaurantId, date, time])
   @@map("bookings")
+}
+
+model BookingEvent {
+  id          String   @id @default(uuid())
+  bookingId   String
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  eventType   String   // CREATED, MODIFIED, CANCELLED, NO_SHOW, COMPLETED
+  details     String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@map("booking_events")
+}
+
+// -------------------------------------------------------------
+// 12. HUMAN HANDOFF & NOTIFICHE
+// -------------------------------------------------------------
+model HumanHandoff {
+  id             String       @id @default(uuid())
+  restaurantId   String
+  restaurant     Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  
+  reason         String?
+  resolved       Boolean      @default(false)
+  resolvedAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@map("human_handoffs")
+}
+
+model Notification {
+  id           String     @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  title        String
+  message      String
+  isRead       Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+
+  @@map("notifications")
+}
+
+// -------------------------------------------------------------
+// 13. SAAS BILLING, PLANS & USAGE
+// -------------------------------------------------------------
+model Plan {
+  id            String         @id @default(uuid())
+  tier          PlanTier       @unique @default(FREE)
+  name          String
+  monthlyPrice  Decimal        @db.Decimal(10, 2)
+  maxBookings   Int            @default(100)
+  maxMessages   Int            @default(1000)
+  features      Json
+  createdAt     DateTime       @default(now())
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                   String     @id @default(uuid())
+  restaurantId         String     @unique
+  restaurant           Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  planId               String
+  plan                 Plan       @relation(fields: [planId], references: [id])
+  
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  status               String     @default("active")
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  @@map("subscriptions")
+}
+
+model UsageRecord {
+  id           String     @id @default(uuid())
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  metric       String     // "messages", "bookings", "ai_tokens"
+  quantity     Int        @default(1)
+  recordedAt   DateTime   @default(now())
+
+  @@map("usage_records")
+}
+
+// -------------------------------------------------------------
+// 14. AUDIT LOG
+// -------------------------------------------------------------
+model AuditLog {
+  id           String      @id @default(uuid())
+  restaurantId String?
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  
+  action       String
+  performedBy  String
+  details      Json?
+  ipAddress    String?
+  createdAt    DateTime    @default(now())
+
+  @@map("audit_logs")
 }
